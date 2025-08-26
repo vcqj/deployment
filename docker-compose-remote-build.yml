@@ -1,0 +1,81 @@
+version: "3.9"
+
+volumes:
+  logs: {}
+
+services:
+  api:
+    build:
+      context: https://github.com/vcqj/api.git#main
+      dockerfile: Dockerfile
+    environment:
+      - PORT=4000
+      - LOG_DIR=/var/log/app
+      - JWT_SECRET=changeme
+      - NODE_ENV=production
+    volumes:
+      - logs:/var/log/app
+    # no ports exposed; reachable via revproxy
+
+  opensearch:
+    build:
+      context: https://github.com/vcqj/opensearch.git#main
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=My!very@strong#pass123word
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    # no ports exposed; reachable via revproxy
+
+  web:
+    build:
+      context: https://github.com/vcqj/web.git#main
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8080/api/graphql
+    depends_on:
+      - api
+
+  dashboards:
+    build:
+      context: https://github.com/vcqj/dashboards.git#main
+    environment:
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    depends_on:
+      - opensearch
+    volumes:
+      - ./dashboards/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+    # no ports exposed; reachable via revproxy
+
+  fluentbit:
+    build:
+      context: https://github.com/vcqj/fluentbit.git#main
+    volumes:
+      - logs:/logs:ro
+    depends_on:
+      - api
+      - opensearch
+    # not exposed; internal only
+
+  dashboards-importer:
+    build:
+      context: https://github.com/vcqj/dashboards-importer.git#main
+    depends_on:
+      - dashboards
+    # internal only
+
+  revproxy:
+    build:
+      context: https://github.com/vcqj/revproxy.git#main
+      dockerfile: Dockerfile
+    depends_on:
+      - api
+      - opensearch
+      - dashboards
+      - web
+    ports:
+      - "8080:8080"
+
+

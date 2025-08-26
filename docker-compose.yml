@@ -1,0 +1,69 @@
+version: "3.9"
+
+volumes:
+  logs: {}
+
+services:
+  api:
+    image: ghcr.io/vcqj/api:latest
+    environment:
+      - PORT=4000
+      - LOG_DIR=/var/log/app
+      - JWT_SECRET=changeme
+      - NODE_ENV=production
+    volumes:
+      - logs:/var/log/app
+    # no ports exposed; reachable via revproxy
+
+  opensearch:
+    image: ghcr.io/vcqj/opensearch:latest
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=My!very@strong#pass123word
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    # no ports exposed; reachable via revproxy
+
+  web:
+    image: ghcr.io/vcqj/web:latest
+    depends_on:
+      - api
+
+  dashboards:
+    image: ghcr.io/vcqj/dashboards:latest
+    environment:
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    depends_on:
+      - opensearch
+    volumes:
+      - ./dashboards/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+    # no ports exposed; reachable via revproxy
+
+  fluentbit:
+    image: ghcr.io/vcqj/fluentbit:latest
+    volumes:
+      - logs:/logs:ro
+    depends_on:
+      - api
+      - opensearch
+    # not exposed; internal only
+
+  dashboards-importer:
+    image: ghcr.io/vcqj/dashboards-importer:latest
+    depends_on:
+      - dashboards
+    # internal only
+
+  revproxy:
+    image: ghcr.io/vcqj/revproxy:latest
+    depends_on:
+      - api
+      - opensearch
+      - dashboards
+      - web
+    ports:
+      - "8080:8080"
+
+
