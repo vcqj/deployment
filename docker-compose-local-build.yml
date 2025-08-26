@@ -1,0 +1,79 @@
+version: "3.9"
+
+volumes:
+  logs: {}
+
+services:
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    environment:
+      - PORT=4000
+      - LOG_DIR=/var/log/app
+      - JWT_SECRET=changeme
+      - NODE_ENV=production
+    volumes:
+      - logs:/var/log/app
+    # no ports exposed; reachable via revproxy
+
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=My!very@strong#pass123word
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    # no ports exposed; reachable via revproxy
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8080/api/graphql
+    depends_on:
+      - api
+
+  dashboards:
+    image: opensearchproject/opensearch-dashboards:2.15.0
+    environment:
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    depends_on:
+      - opensearch
+    volumes:
+      - ./dashboards/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+    # no ports exposed; reachable via revproxy
+
+  fluentbit:
+    build:
+      context: ../fluentbit
+    volumes:
+      - logs:/logs:ro
+    depends_on:
+      - api
+      - opensearch
+    # not exposed; internal only
+
+  dashboards-importer:
+    build:
+      context: ../dashboards-importer
+    depends_on:
+      - dashboards
+    # internal only
+
+  revproxy:
+    build:
+      context: ../revproxy
+      dockerfile: Dockerfile
+    depends_on:
+      - api
+      - opensearch
+      - dashboards
+      - web
+    ports:
+      - "8080:8080"
+
+
